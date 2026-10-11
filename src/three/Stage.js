@@ -1,17 +1,18 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { VIEWPORT, gradientBackground, mayaGrid, contactShadow, createAxisGizmo } from './mayaLook.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { CATALOG } from '../lib/catalog.js';
 import { buildPart, makeBreadBai, BOARD } from './models.js';
 
 const ACCENT = 0x0a84ff;
-const SNAP_RADIUS = 5.0;   // how close a lead must be to grab a hole
-const INSERT_RADIUS = 1.5; // how close a lead must be to count as inserted
+const SNAP_RADIUS = 5.0;
+const INSERT_RADIUS = 1.5;
 
 export class Stage {
   constructor(canvas) {
     this.canvas = canvas;
-    this.parts = new Map();   // partId -> { object3D, part }
+    this.parts = new Map();
     this.wires = new Map();
     this.callbacks = {};
     this.tool = 'select';
@@ -31,25 +32,24 @@ export class Stage {
     this.renderer.setAnimationLoop(this._loop);
   }
 
-  // ----------------------------------------------------------------- setup
 
   _initScene() {
     const renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.05;
+    renderer.toneMappingExposure = 0.95;
     this.renderer = renderer;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0d0d0f);
-    scene.fog = new THREE.Fog(0x0d0d0f, 320, 760);
+    scene.background = gradientBackground();
+    scene.fog = new THREE.Fog(VIEWPORT.fog, 380, 950);
     this.scene = scene;
 
     const pmrem = new THREE.PMREMGenerator(renderer);
     scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.06).texture;
-    scene.environmentIntensity = 0.55;
+    scene.environmentIntensity = 0.6;
 
     const camera = new THREE.PerspectiveCamera(34, 1, 1, 2000);
     camera.position.set(-12, 108, 132);
@@ -65,22 +65,26 @@ export class Stage {
     controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
     this.controls = controls;
 
-    const key = new THREE.DirectionalLight(0xffffff, 2.1);
-    key.position.set(70, 150, 90);
+    const key = new THREE.DirectionalLight(0xfff4e6, 2.0);
+    key.position.set(80, 160, 100);
     key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
-    key.shadow.radius = 3;
-    key.shadow.bias = -0.0012;
+    key.shadow.mapSize.set(4096, 4096);
+    key.shadow.radius = 5;
+    key.shadow.bias = -0.0008;
+    key.shadow.normalBias = 0.35;
     const c = key.shadow.camera;
-    c.left = -160; c.right = 160; c.top = 160; c.bottom = -160; c.near = 20; c.far = 420;
+    c.left = -150; c.right = 150; c.top = 150; c.bottom = -150; c.near = 20; c.far = 420;
     scene.add(key);
 
-    const fill = new THREE.DirectionalLight(0x9fc4ff, 0.5);
-    fill.position.set(-110, 70, -60);
+    const fill = new THREE.DirectionalLight(0xa9c8ff, 0.7);
+    fill.position.set(-120, 80, -40);
     scene.add(fill);
-    scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x101014, 0.45));
+    const rim = new THREE.DirectionalLight(0xffffff, 0.9);
+    rim.position.set(-20, 60, -160);
+    scene.add(rim);
+    scene.add(new THREE.HemisphereLight(0xe6eeff, 0x3a3f46, 0.7));
 
-    const deskMat = new THREE.MeshStandardMaterial({ color: 0x141418, roughness: 0.92, metalness: 0.15 });
+    const deskMat = new THREE.MeshStandardMaterial({ color: 0x3f454c, roughness: 0.95, metalness: 0 });
     const desk = new THREE.Mesh(new THREE.CircleGeometry(520, 64), deskMat);
     desk.rotation.x = -Math.PI / 2;
     desk.position.y = -0.4;
@@ -89,13 +93,14 @@ export class Stage {
     this.desk = desk;
     scene.add(desk);
 
-    const grid = new THREE.GridHelper(1040, 104, 0x2a2c33, 0x1c1e23);
-    grid.material.transparent = true;
-    grid.material.opacity = 0.34;
+    const grid = mayaGrid(1000, 10, 50);
     grid.position.y = -0.3;
     scene.add(grid);
+    scene.add(contactShadow(260, 130, 0.7));
 
-    // Reusable helpers
+    this.gizmo = createAxisGizmo();
+    this.gizmoLeft = 14;
+
     this.hoverRing = new THREE.Mesh(
       new THREE.RingGeometry(1.5, 2.4, 24),
       new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthTest: false }),
@@ -135,13 +140,14 @@ export class Stage {
     const w = el.clientWidth, h = el.clientHeight;
     if (!w || !h) return;
     this.renderer.setSize(w, h, false);
+    this._w = w; this._h = h;
+    const pal = el.querySelector('.palette');
+    this.gizmoLeft = pal ? Math.max(14, pal.getBoundingClientRect().right - el.getBoundingClientRect().left + 14) : 14;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
 
-  // ----------------------------------------------------------- scene sync
 
-  /** Reconciles the scene against the app's part and wire lists. */
   sync(parts, wires, selection, tool, mode) {
     this.tool = tool;
     this.mode = mode;
@@ -209,7 +215,6 @@ export class Stage {
     }
   }
 
-  /** World position of a wire endpoint (a component pin or a board hole). */
   endpointPosition(ep) {
     if (!ep) return null;
     if (ep.kind === 'hole') {
@@ -265,7 +270,6 @@ export class Stage {
     this.holeOverlay = { mesh, refs, count: total, boards: boards.length };
   }
 
-  /** Paints the board holes for the voltage and connection views. */
   updateProbe(probe) {
     this.probe = probe;
     const overlay = this.holeOverlay;
@@ -305,7 +309,6 @@ export class Stage {
     }
   }
 
-  // -------------------------------------------------------------- picking
 
   _updatePointer(event) {
     const rect = this.canvas.getBoundingClientRect();
@@ -314,7 +317,6 @@ export class Stage {
     this.raycaster.setFromCamera(this.pointer, this.camera);
   }
 
-  /** Nearest board hole under the cursor, if any. */
   pickHole() {
     let best = null;
     for (const [id, entry] of this.parts) {
@@ -371,7 +373,6 @@ export class Stage {
     return hit ? hit.point : null;
   }
 
-  // ---------------------------------------------------------------- input
 
   _initEvents() {
     const c = this.canvas;
@@ -417,7 +418,6 @@ export class Stage {
 
     const hit = this.pickPart();
     if (!hit) {
-      // clicking the board or empty desk clears the selection
       this.callbacks.onSelect?.(null);
       return;
     }
@@ -528,10 +528,6 @@ export class Stage {
     }
   }
 
-  /**
-   * Places a part at (x, z): if any lead lands near a hole the whole part is
-   * pulled onto the grid and the seated leads are recorded.
-   */
   snap(partId, x, z, rotY) {
     const entry = this.parts.get(partId);
     const part = entry?.part;
@@ -578,7 +574,6 @@ export class Stage {
     return { x: nx, y: BOARD.h, z: nz, inserted, boardId: bestShift.boardId };
   }
 
-  // ------------------------------------------------------------ placement
 
   beginPlacement(type) {
     this.cancelPlacement();
@@ -646,7 +641,6 @@ export class Stage {
     this.controls.enabled = true;
   }
 
-  // ----------------------------------------------------------------- views
 
   setView(name) {
     const target = new THREE.Vector3(0, 4, 0);
@@ -681,7 +675,6 @@ export class Stage {
     };
   }
 
-  // ------------------------------------------------------------------ loop
 
   _loop() {
     const dt = Math.min(this.clock.getDelta(), 0.05);
@@ -694,12 +687,33 @@ export class Stage {
     }
     this.controls.update();
     this.callbacks.onFrame?.(dt, this.clock.elapsedTime);
-    // Let every part animate itself (glowing LEDs, spinning motors, meters).
     for (const [, entry] of this.parts) {
       entry.object3D.userData.update?.(entry.part, this.clock.elapsedTime);
     }
     if (this.selection && !this.dragState) this._syncSelection();
     this.renderer.render(this.scene, this.camera);
+    this._drawGizmo();
+  }
+
+  _drawGizmo() {
+    const g = this.gizmo;
+    if (!g || !this._w) return;
+    const size = 96;
+    if (this._w < this.gizmoLeft + size + 20) return;
+    const dir = new THREE.Vector3().subVectors(this.camera.position, this.controls.target).normalize();
+    g.camera.position.copy(dir.multiplyScalar(6));
+    g.camera.up.copy(this.camera.up);
+    g.camera.lookAt(0, 0, 0);
+    const r = this.renderer;
+    r.autoClear = false;
+    r.setScissorTest(true);
+    r.setViewport(this.gizmoLeft, 14, size, size);
+    r.setScissor(this.gizmoLeft, 14, size, size);
+    r.clearDepth();
+    r.render(g.scene, g.camera);
+    r.setScissorTest(false);
+    r.setViewport(0, 0, this._w, this._h);
+    r.autoClear = true;
   }
 
   dispose() {
@@ -709,7 +723,6 @@ export class Stage {
   }
 }
 
-/** A jumper wire: a soft arc between two points, like real hookup wire. */
 function wireGeometry(a, b, slack = 1) {
   const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
   const dist = a.distanceTo(b);

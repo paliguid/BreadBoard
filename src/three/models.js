@@ -3,7 +3,6 @@ import { CATALOG, G, LED_COLORS } from '../lib/catalog.js';
 import { resistorBands, formatValue } from '../lib/units.js';
 import { BOARD, ROW_LETTERS, COLS, BreadBaiHoles } from '../lib/board.js';
 
-// ---------------------------------------------------------------- primitives
 
 const roundedRect = (w, d, r) => {
   const s = new THREE.Shape();
@@ -16,7 +15,6 @@ const roundedRect = (w, d, r) => {
   return s;
 };
 
-/** A box with softened edges, sitting with its base on y = 0. */
 export function slab(w, h, d, r = 0.6, bevel = 0.25) {
   const geo = new THREE.ExtrudeGeometry(roundedRect(w, d, Math.min(r, Math.min(w, d) / 2 - 0.01)), {
     depth: Math.max(h - bevel * 2, 0.01), bevelEnabled: true, bevelSize: bevel,
@@ -37,7 +35,6 @@ const M = {
   matte: (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.85, metalness: 0 }),
 };
 
-/** Straight length of wire between two points. */
 function lead(a, b, radius = 0.32, material) {
   const dir = new THREE.Vector3().subVectors(b, a);
   const len = dir.length();
@@ -50,7 +47,6 @@ function lead(a, b, radius = 0.32, material) {
 
 const v3 = (x, y, z) => new THREE.Vector3(x, y, z);
 
-/** Bent axial lead: down from the body, across, then into the hole. */
 function axialLead(group, bodyX, bodyY, pinX, mat) {
   group.add(lead(v3(bodyX, bodyY, 0), v3(pinX, bodyY, 0), 0.3, mat));
   group.add(lead(v3(pinX, bodyY, 0), v3(pinX, -3.2, 0), 0.3, mat));
@@ -85,7 +81,6 @@ function glowSprite(color) {
   return s;
 }
 
-// --------------------------------------------------------------- BreadBai
 
 export function makeBreadBai() {
   const holes = BreadBaiHoles();
@@ -98,19 +93,16 @@ export function makeBreadBai() {
     const toX = (x) => (x + BOARD.w / 2) * scale;
     const toY = (z) => (z + BOARD.d / 2) * scale;
 
-    // centre channel
     const grad = ctx.createLinearGradient(0, toY(-3.81), 0, toY(3.81));
     grad.addColorStop(0, '#d8d8d4'); grad.addColorStop(0.5, '#e9e9e6'); grad.addColorStop(1, '#d8d8d4');
     ctx.fillStyle = grad; ctx.fillRect(0, toY(-3.05), w, (6.1) * scale);
 
-    // rail stripes
     ctx.lineWidth = 2.2 * scale / 2;
     for (const [z, color] of [[-23.6, '#2f5fd0'], [-18.2, '#d0342c'], [18.2, '#d0342c'], [23.6, '#2f5fd0']]) {
       ctx.strokeStyle = color; ctx.beginPath();
       ctx.moveTo(toX(-36), toY(z)); ctx.lineTo(toX(36), toY(z)); ctx.stroke();
     }
 
-    // holes
     for (const hole of holes) {
       const x = toX(hole.x), y = toY(hole.z), s = 1.5 * scale;
       ctx.fillStyle = '#c9c9c5';
@@ -121,7 +113,6 @@ export function makeBreadBai() {
       ctx.fillRect(x - s / 2, y + s / 2 - 1.2, s, 1.2);
     }
 
-    // silkscreen
     ctx.fillStyle = '#8a8a86';
     ctx.font = `${2.1 * scale}px -apple-system, "Helvetica Neue", Arial`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -156,7 +147,6 @@ export function makeBreadBai() {
   top.userData.isBoardTop = true;
   group.add(top);
 
-  // recessed channel so it reads as a real board from a low angle
   const channel = new THREE.Mesh(new THREE.BoxGeometry(BOARD.w - 3, 1.4, 6.1), M.matte('#d3d3cf'));
   channel.position.set(0, BOARD.h - 0.6, 0);
   group.add(channel);
@@ -166,7 +156,6 @@ export function makeBreadBai() {
   return group;
 }
 
-// ------------------------------------------------------------------- parts
 
 const builders = {};
 
@@ -211,7 +200,7 @@ builders.led = (part) => {
   glow.position.y = 8; glow.visible = false;
   g.add(glow);
   g.add(lead(v3(-G / 2, 3.4, 0), v3(-G / 2, -3.2, 0), 0.3));
-  g.add(lead(v3(G / 2, 3.2, 0), v3(G / 2, -3.2, 0), 0.3)); // cathode leg is shorter in real life
+  g.add(lead(v3(G / 2, 3.2, 0), v3(G / 2, -3.2, 0), 0.3));
   g.userData.update = (p) => {
     const s = LED_COLORS[p.props.color] ?? LED_COLORS.red;
     mat.color.set(p.state?.burnt ? '#4a4a4a' : s.tint);
@@ -561,9 +550,7 @@ const meterBuilder = (unit) => () => {
 builders.voltmeter = meterBuilder('V');
 builders.ammeter = meterBuilder('A');
 
-// ------------------------------------------------------------------- facade
 
-/** Builds the 3D body for a part and attaches pin markers used for wiring. */
 export function buildPart(part) {
   const def = CATALOG[part.type];
   const group = (builders[part.type] ?? (() => new THREE.Group()))(part);

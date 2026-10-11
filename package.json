@@ -4,10 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node server/index.js",
     "build": "vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "node server/index.js --production",
+    "verify:groq": "node scripts/verify-groq.mjs",
+    "verify": "node scripts/verify-groq.mjs && node scripts/verify-lessons.mjs && node scripts/verify-pcb.mjs && node scripts/verify-mech.mjs && node scripts/verify-mech-render.mjs && node scripts/verify-mech-lessons.mjs && node scripts/verify-systems.mjs",
+    "test:ui": "node scripts/ui/pcb.test.mjs && node scripts/ui/workbench.test.mjs && node scripts/ui/mech.test.mjs && node scripts/ui/systems.test.mjs && node scripts/ui/split.test.mjs",
+    "test": "npm run verify && npm run test:ui",
+    "start": "node server/index.js --production"
   },
   "dependencies": {
     "react": "^19.2.8",
@@ -18,6 +23,7 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
+    "jsdom": "^30.1.0",
     "oxlint": "^1.81.0",
     "vite": "^8.3.0"
   }

@@ -20,10 +20,6 @@ class UnionFind {
 export const pinKey = (partId, pin) => `p:${partId}:${pin}`;
 export const holeKey = (boardId, group) => `h:${boardId}:${group}`;
 
-/**
- * Walks every part, every inserted lead and every jumper wire and merges them
- * into electrical nets. Returns the net assignment plus a ground choice.
- */
 export function buildNets(parts, wires) {
   const uf = new UnionFind();
 
@@ -31,7 +27,6 @@ export function buildNets(parts, wires) {
     const def = CATALOG[part.type];
     if (!def) continue;
     for (const pin of def.pins) uf.add(pinKey(part.id, pin.name));
-    // A lead pushed into a BreadBai hole joins that hole's strip.
     if (part.inserted) {
       for (const [pinName, hk] of Object.entries(part.inserted)) {
         if (hk) uf.union(pinKey(part.id, pinName), hk);
@@ -53,8 +48,6 @@ export function buildNets(parts, wires) {
     keyToNet.set(k, netOfRoot.get(r));
   }
 
-  // Ground: an explicit ground symbol wins, otherwise the negative terminal of
-  // the first power source, otherwise net 0.
   let ground = null;
   for (const part of parts) {
     if (part.type === 'ground') { ground = keyToNet.get(pinKey(part.id, 'gnd')); break; }
@@ -83,7 +76,6 @@ export class Circuit {
     this.keyToNet = keyToNet;
     this.ground = ground;
 
-    // Remap so ground becomes -1 and the rest compact down to 0..n-1.
     const remap = new Map();
     let next = 0;
     for (let i = 0; i < netCount; i++) {
@@ -95,7 +87,6 @@ export class Circuit {
       return n == null ? -1 : remap.get(n);
     };
 
-    // Allocate internal nodes and voltage-source branches.
     this.elements = [];
     let nodeCount = next;
     let vsCount = 0;
@@ -126,7 +117,6 @@ export class Circuit {
     return i < 0 ? 0 : this.sys.x[i];
   }
 
-  /** One transient timestep, with a Newton loop for the nonlinear parts. */
   step(dt) {
     const sys = this.sys;
     sys.dt = dt;
@@ -157,7 +147,6 @@ export class Circuit {
     this.iterations = iter;
     this.time += dt;
 
-    // Let parts integrate their own physics now the solution is settled.
     const ctx = { sys, dt, time: this.time };
     for (const el of this.elements) {
       if (!el.def.post) continue;
@@ -167,7 +156,6 @@ export class Circuit {
     }
   }
 
-  /** Restart from a cold, de-energised state. */
   reset() {
     this.sys.x.fill(0);
     this.time = 0;

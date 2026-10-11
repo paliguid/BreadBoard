@@ -1,7 +1,6 @@
 import { CATALOG } from './catalog.js';
 import { BOARD, HOLES, holeByName } from './board.js';
 
-/** Rotates a local pin offset into board space (matches Object3D.rotation.y). */
 export const rotateXZ = (p, rot) => ({
   x: p.x * Math.cos(rot) + p.z * Math.sin(rot),
   z: -p.x * Math.sin(rot) + p.z * Math.cos(rot),
@@ -12,7 +11,6 @@ export function pinWorld(part, pinDef) {
   return { x: part.x + r.x, z: part.z + r.z };
 }
 
-/** Which holes each of a part's leads is sitting in. */
 export function computeInsertion(part, board, tolerance = 1.5) {
   const def = CATALOG[part.type];
   const inserted = {};
@@ -29,7 +27,6 @@ export function computeInsertion(part, board, tolerance = 1.5) {
   return inserted;
 }
 
-/** Origin that puts pin `pinIndex` exactly into the named hole. */
 export function originForHole(type, holeName, rot = 0, pinIndex = 0, board = { x: 0, z: 0 }) {
   const def = CATALOG[type];
   const hole = holeByName(holeName);

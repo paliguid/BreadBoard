@@ -7,7 +7,6 @@ export const COLS = 30;
 export const colX = (c) => (c - (COLS - 1) / 2) * G;
 export const rowZ = (r) => (r < 5 ? -(3.81 + r * G) : 3.81 + (r - 5) * G);
 
-/** Every hole on a half-size board, with the strip (net) it belongs to. */
 export function BreadBaiHoles() {
   const holes = [];
   for (let c = 0; c < COLS; c++) {

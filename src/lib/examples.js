@@ -11,7 +11,6 @@ export function makePart(type, extra = {}) {
     id: extra.id ?? newId(type),
     type,
     x: 0, y: 0, z: 0, rot: 0,
-    props: { ...makeProps(type), ...(extra.props ?? {}) },
     state: def.state(),
     mem: {},
     inserted: {},
@@ -20,9 +19,9 @@ export function makePart(type, extra = {}) {
   };
 }
 
-const BOARD_ID = 'board';
+export const BOARD_ID = 'board';
 
-function seat(type, holeName, opts = {}) {
+export function seat(type, holeName, opts = {}) {
   const rot = opts.rot ?? 0;
   const origin = originForHole(type, holeName, rot, opts.pin ?? 0);
   const part = makePart(type, { ...opts, rot, x: origin.x, z: origin.z, y: origin.y, props: opts.props });
@@ -30,19 +29,19 @@ function seat(type, holeName, opts = {}) {
   return part;
 }
 
-function loose(type, x, z, opts = {}) {
+export function loose(type, x, z, opts = {}) {
   return makePart(type, { ...opts, x, z, y: 0, rot: opts.rot ?? 0 });
 }
 
-const hole = (name) => {
+export const hole = (name) => {
   const h = holeByName(name);
   return { kind: 'hole', boardId: BOARD_ID, name, group: h.group };
 };
-const pinRef = (partId, pin) => ({ kind: 'pin', partId, pin });
+export const pinRef = (partId, pin) => ({ kind: 'pin', partId, pin });
 
-const wire = (a, b, color = '#d8d8dc') => ({ id: newId('w'), a, b, color });
+export const wire = (a, b, color = '#d8d8dc') => ({ id: newId('w'), a, b, color });
 
-function board() {
+export function board() {
   return makePart('BreadBai', { id: BOARD_ID, x: 0, z: 0, y: 0 });
 }
 
@@ -152,9 +151,6 @@ export const EXAMPLES = [
       };
     },
   },
-  {
-    
-  }
 ];
 
 export const getExample = (id) => EXAMPLES.find((e) => e.id === id) ?? EXAMPLES[1];

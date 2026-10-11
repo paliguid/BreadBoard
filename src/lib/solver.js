@@ -1,9 +1,5 @@
-// Modified Nodal Analysis engine.
-// Node index -1 means ground (reference). Everything else indexes into the
-// unknown vector: [node voltages ... , voltage-source branch currents ...].
 
 export function solveLinear(A, b, n) {
-  // Gaussian elimination with partial pivoting. A is row-major Float64Array.
   const x = new Float64Array(n);
   for (let col = 0; col < n; col++) {
     let piv = col;
@@ -12,7 +8,7 @@ export function solveLinear(A, b, n) {
       const v = Math.abs(A[r * n + col]);
       if (v > best) { best = v; piv = r; }
     }
-    if (best < 1e-18) continue; // singular row, leave as zero
+    if (best < 1e-18) continue;
     if (piv !== col) {
       for (let c = 0; c < n; c++) {
         const t = A[col * n + c]; A[col * n + c] = A[piv * n + c]; A[piv * n + c] = t;
@@ -49,14 +45,11 @@ export class System {
   clear() {
     this.A.fill(0);
     this.b.fill(0);
-    // gmin: a tiny leak to ground keeps floating islands solvable.
     for (let i = 0; i < this.nodeCount; i++) this.A[i * this.n + i] += 1e-10;
   }
 
-  /** Voltage of a node from the last accepted solution. */
   v(i) { return i < 0 ? 0 : this.x[i]; }
   vd(a, b) { return this.v(a) - this.v(b); }
-  /** Current through voltage-source branch k. */
   branchCurrent(k) { return this.x[this.nodeCount + k]; }
 
   addG(a, b, g) {
@@ -69,13 +62,11 @@ export class System {
 
   addR(a, b, R) { this.addG(a, b, 1 / Math.max(R, 1e-9)); }
 
-  /** Current source pushing I amperes out of node a and into node b. */
   addI(a, b, I) {
     if (a >= 0) this.b[a] -= I;
     if (b >= 0) this.b[b] += I;
   }
 
-  /** gm * (V(cp) - V(cn)) amperes flow out of node op and into node on. */
   addVCCS(op, on, cp, cn, gm) {
     const n = this.n, A = this.A;
     if (op >= 0 && cp >= 0) A[op * n + cp] += gm;
@@ -84,7 +75,6 @@ export class System {
     if (on >= 0 && cn >= 0) A[on * n + cn] += gm;
   }
 
-  /** Ideal voltage source: V(a) - V(b) = value, using branch slot k. */
   addVS(k, a, b, value) {
     const n = this.n, A = this.A;
     const r = this.nodeCount + k;
@@ -100,9 +90,8 @@ export class System {
   }
 }
 
-export const VT = 0.025852; // thermal voltage at ~300K
+export const VT = 0.025852;
 
-/** Keeps Newton-Raphson from stepping off the exponential cliff. */
 export function limitJunction(vnew, vold, vt) {
   if (!isFinite(vnew)) return vold;
   if (vnew > 0.3 && Math.abs(vnew - vold) > 2 * vt) {
@@ -116,10 +105,6 @@ export function limitJunction(vnew, vold, vt) {
   return Math.max(vnew, -80);
 }
 
-/**
- * Stamps a PN junction between nodes a and b, updating `mem` (an object used
- * to remember the last junction voltage for limiting). Returns the current.
- */
 export function stampDiode(sys, a, b, Is, nVt, mem, key) {
   let vd = sys.vd(a, b);
   vd = limitJunction(vd, mem[key] ?? 0, nVt);

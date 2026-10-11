@@ -12,7 +12,7 @@ export function stripLabel(key) {
   return group[0] === 'T' ? `${col} A–E` : `${col} F–J`;
 }
 
-export default function Inspector({ part, onProp, onRotate, onDuplicate, onDelete, onClose }) {
+export default function Inspector({ part, onProp, onRotate, onDuplicate, onDelete, onGuide, onClose }) {
   if (!part) return null;
   const def = CATALOG[part.type];
   const reading = def.readout?.(part);
@@ -31,6 +31,7 @@ export default function Inspector({ part, onProp, onRotate, onDuplicate, onDelet
           <h2>{def.name}</h2>
           <p>{seated ? `${seated} of ${def.pins.length} leads seated` : 'Not on the board'}</p>
         </div>
+        <button className="btn icon ghost" onClick={() => onGuide(part.type)} aria-label={`How to use the ${def.name}`} title="How to use this part"><Icon.learn size={17} /></button>
         <button className="btn icon ghost" onClick={onClose} aria-label="Close inspector"><Icon.close size={17} /></button>
       </div>
 
@@ -44,7 +45,7 @@ export default function Inspector({ part, onProp, onRotate, onDuplicate, onDelet
 
         {def.props.map((prop) => (
           <Field key={prop.key} prop={prop} value={part.props[prop.key]}
-            onChange={(v) => onProp(part.id, prop.key, v)} />
+            onChange={(v) => onProp(prop.key, v)} />
         ))}
 
         {def.hint && <p className="hint">{def.hint}</p>}

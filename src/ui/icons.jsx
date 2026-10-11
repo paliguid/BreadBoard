@@ -89,5 +89,8 @@ export const Icon = {
   close: (p) => <S {...p}><path d="M6 6l12 12M18 6L6 18" /></S>,
   search: (p) => <S {...p}><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></S>,
   library: (p) => <S {...p}><path d="M4 5.5h6v13H4zM13 5.5h3v13h-3z" /><path d="M18.5 6.5l2.5 11.5" /></S>,
+  learn: (p) => <S {...p}><path d="M2.5 9.5L12 5l9.5 4.5L12 14z" /><path d="M6.5 11.8V16c1.5 1.6 3.4 2.5 5.5 2.5s4-.9 5.5-2.5v-4.2" /><path d="M21.5 9.5V15" /></S>,
   chevron: (p) => <S {...p}><path d="M9 6l6 6-6 6" /></S>,
+  arrowUp: (p) => <S {...p}><path d="M12 19V5M6 11l6-6 6 6" /></S>,
+  sparkle: (p) => <S {...p}><path d="M12 2.5l1.9 6.1 6.1 1.9-6.1 1.9-1.9 6.1-1.9-6.1L4 10.5l6.1-1.9z" /><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z" /></S>,
 };

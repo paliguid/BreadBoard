@@ -1,18 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { EXAMPLES } from '../lib/examples.js';
 import { Icon } from './icons.jsx';
+import { useDismiss } from './useDismiss.js';
+import { Logo } from './Logo.jsx';
 
-function useDismiss(ref, close) {
-  useEffect(() => {
-    const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) close(); };
-    const onKey = (e) => { if (e.key === 'Escape') close(); };
-    document.addEventListener('pointerdown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey); };
-  }, [ref, close]);
-}
-
-export function TopBar({ onExample, onSave, onOpen, onUndo, onRedo, canUndo, canRedo, sound, onSound, onHelp }) {
+export function TopBar({ bench, onBench, onExample, onLearn, onSave, onOpen, onUndo, onRedo, canUndo, canRedo, sound, onSound, onHelp }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef(null);
   useDismiss(wrap, () => setOpen(false));
@@ -20,11 +12,24 @@ export function TopBar({ onExample, onSave, onOpen, onUndo, onRedo, canUndo, can
   return (
     <header className="topbar">
       <div className="wordmark">
-        <span className="spark" />
+        <Logo size={26} />
         <b>BreadBai</b>
-        <span>3D BreadBai simulator</span>
+        <span>3D electronics lab</span>
       </div>
 
+      <div className="seg bench-switch" role="group" aria-label="Workbench">
+        <button aria-pressed={bench === 'breadboard'} onClick={() => onBench('breadboard')} title="Build and simulate on a breadboard">Breadboard</button>
+        <button aria-pressed={bench === 'pcb'} onClick={() => onBench('pcb')} title="Design a printed circuit board">PCB</button>
+        <button aria-pressed={bench === 'mech'} onClick={() => onBench('mech')} title="Build and simulate gears, motors and mechanisms in 3D">Mechanical</button>
+        <button aria-pressed={bench === 'split'} onClick={() => onBench('split')} title="Breadboard and Mechanical side by side">Split</button>
+      </div>
+
+      <button className="btn learn-btn" onClick={onLearn} title="Lessons, component guide and cheat sheet (L)">
+        <Icon.learn size={16} />Learn
+      </button>
+
+      {bench !== 'pcb' && (
+        <>
       <div className="menu-wrap" ref={wrap}>
         <button className="btn" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
           <Icon.library size={16} />Circuits
@@ -48,18 +53,22 @@ export function TopBar({ onExample, onSave, onOpen, onUndo, onRedo, canUndo, can
 
       <button className="btn icon ghost" onClick={onUndo} disabled={!canUndo} title="Undo (⌘Z)"><Icon.undo size={17} /></button>
       <button className="btn icon ghost" onClick={onRedo} disabled={!canRedo} title="Redo (⇧⌘Z)"><Icon.redo size={17} /></button>
+        </>
+      )}
 
       <div className="spacer" />
 
-      <button className="btn ghost" aria-pressed={sound} onClick={onSound} title="Buzzer audio">
-        {sound ? 'Sound on' : 'Sound off'}
-      </button>
+      {bench !== 'pcb' && (
+        <button className="btn ghost" aria-pressed={sound} onClick={onSound} title="Buzzer audio">
+          {sound ? 'Sound on' : 'Sound off'}
+        </button>
+      )}
       <button className="btn icon ghost" onClick={onHelp} title="Keyboard shortcuts">?</button>
     </header>
   );
 }
 
-export function Toolbar({ tool, setTool, mode, setMode }) {
+export function Toolbar({ tool, setTool, mode, setMode, children }) {
   return (
     <div className="toolbar glass">
       <div className="seg">
@@ -72,6 +81,8 @@ export function Toolbar({ tool, setTool, mode, setMode }) {
         <button aria-pressed={mode === 'voltage'} onClick={() => setMode('voltage')}>Voltage</button>
         <button aria-pressed={mode === 'nets'} onClick={() => setMode('nets')}>Connections</button>
       </div>
+      {children && <div style={{ width: 1, height: 20, background: 'var(--stroke)' }} />}
+      {children}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState, useDeferredValue, useMemo } from 'react';
 import { Stage } from './three/Stage.js';
 import { Circuit, endpointKey } from './lib/circuit.js';
 import { CATALOG } from './lib/catalog.js';
@@ -8,13 +8,28 @@ import { computeInsertion } from './lib/placement.js';
 import Palette from './ui/Palette.jsx';
 import Inspector from './ui/Inspector.jsx';
 import { TopBar, Toolbar, Dock, Transport, Legend, Banner } from './ui/Chrome.jsx';
+import Coach from './ui/Coach.jsx';
+import Doctor from './ui/Doctor.jsx';
+import LearnHub from './ui/LearnHub.jsx';
+import GuideBot from './ui/GuideBot.jsx';
+import { Logo } from './ui/Logo.jsx';
 import { Icon } from './ui/icons.jsx';
+import { diagnose } from './lib/diagnose.js';
+import { getLesson, nextLessonId } from './lib/lessons.js';
+import { loadProgress, saveProgress } from './lib/progress.js';
+import splash from './assets/bread3.webp';
+import PcbEditor from './pcb/PcbEditor.jsx';
+import MechEditor from './mech/MechEditor.jsx';
+import { useMechDoc } from './mech/mechStore.js';
+import { analyze } from './pcb/analysis.js';
+import { CATALOG_FOOTPRINTS } from './pcb/footprints.js';
+import { extractNetlist } from './pcb/netlist.js';
+import { usePcbDoc } from './pcb/pcbStore.js';
 
-const DT = 1e-3;                       // 1 kHz solver step
-const MAX_STEPS = 240;                 // never let a slow frame melt the tab
+const DT = 1e-3;
+const MAX_STEPS = 240;
 const WIRE_COLORS = ['#e8e8ec', '#ffd60a', '#30d158', '#64d2ff', '#bf5af2', '#ff9f0a'];
 
-/** Snapshot of the solved circuit that the 3D stage paints holes and wires with. */
 function makeProbe(circuit) {
   if (!circuit) return null;
   const voltage = new Map();
@@ -29,7 +44,6 @@ function makeProbe(circuit) {
     net.set(key, n);
     if (Math.abs(v) > vmax) vmax = Math.abs(v);
   }
-  // A net is "live" (worth colouring) if something is actually attached to it.
   const counts = new Map();
   for (const [, n] of circuit.keyToNet) counts.set(n, (counts.get(n) ?? 0) + 1);
   for (const [n, c] of counts) if (c > 1) live.add(n);
@@ -55,6 +69,9 @@ export default function App() {
   const audioRef = useRef(null);
   const statusClock = useRef(0);
   const wireColor = useRef(0);
+  const lessonRef = useRef(null);
+  const eventsRef = useRef(new Set());
+  const liveRef = useRef({ mode: 'standard', running: true, selection: null, bench: 'breadboard', splitFocus: 'breadboard' });
 
   const [, force] = useReducer((n) => n + 1, 0);
   const [selection, setSelection] = useState(null);
@@ -66,12 +83,61 @@ export default function App() {
   const [sound, setSound] = useState(true);
   const [help, setHelp] = useState(false);
   const [intro, setIntro] = useState('show');
-  const [status, setStatus] = useState({ time: 0, nodes: 0, converged: true });
+  const [status, setStatus] = useState({ time: 0, nodes: 0, converged: true, issues: [] });
   const [vmax, setVmax] = useState(9);
+  const [lesson, setLessonState] = useState(null);
+  const [hub, setHub] = useState(null);
+  const [progress, setProgress] = useState(loadProgress);
+  const progressRef = useRef(progress);
+  const [bench, setBench] = useState('breadboard');
+  const [splitRatio, setSplitRatio] = useState(0.5);
+  const [splitFocus, setSplitFocus] = useState('breadboard');
+  const [pcbTick, setPcbTick] = useState(0);
+  const switchBench = useCallback((next) => {
+    if (next === 'split') setSplitFocus(liveRef.current.bench === 'mech' ? 'mech' : 'breadboard');
+    setBench(next);
+  }, []);
+  const appRef = useRef(null);
+  const splitDrag = useRef(false);
+  const onSplitDown = useCallback((e) => {
+    e.preventDefault();
+    const el = appRef.current;
+    if (!el) return;
+    splitDrag.current = true;
+    const rect = el.getBoundingClientRect();
+    const move = (ev) => {
+      if (!splitDrag.current) return;
+      const x = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
+      setSplitRatio(Math.min(0.72, Math.max(0.3, x / rect.width)));
+    };
+    const up = () => {
+      splitDrag.current = false;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('touchmove', move);
+      window.removeEventListener('touchend', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('touchmove', move, { passive: true });
+    window.addEventListener('touchend', up);
+  }, []);
+  const pcb = usePcbDoc();
+  const mech = useMechDoc();
+  const { replace: pcbReplace, reset: pcbReset } = pcb;
+  const deferredPcb = useDeferredValue(pcb.doc);
+  const pcbAnalysis = useMemo(() => (bench === 'pcb' ? analyze(deferredPcb) : null), [deferredPcb, bench]);
 
   const doc = docRef.current;
 
-  // ----------------------------------------------------------- document ops
+
+  const setLesson = useCallback((next) => {
+    lessonRef.current = next;
+    setLessonState(next);
+  }, []);
+
+  const track = useCallback((name) => { eventsRef.current.add(name); }, []);
+
 
   const rebuild = useCallback(() => {
     circuitRef.current = new Circuit(docRef.current.parts, docRef.current.wires);
@@ -92,11 +158,90 @@ export default function App() {
   }, [rebuild]);
 
   const loadExample = useCallback((id) => {
+    setLesson(null);
     load(getExample(id).build());
     requestAnimationFrame(() => stageRef.current?.frameAll());
-  }, [load]);
+  }, [load, setLesson]);
 
-  // ------------------------------------------------------------- edit verbs
+  const startLesson = useCallback((id) => {
+    const def = getLesson(id);
+    if (!def) return;
+    if (def.bench === 'pcb') {
+      pcbReset(def.setup());
+      setBench('pcb');
+      eventsRef.current = new Set();
+      setLesson({ id, step: 0, done: false, finished: false });
+      setHub(null);
+      return;
+    }
+    if (def.bench === 'mech') {
+      mech.reset(def.setup());
+      setBench('mech');
+      eventsRef.current = new Set();
+      setLesson({ id, step: 0, done: false, finished: false });
+      setHub(null);
+      return;
+    }
+    setBench('breadboard');
+    load(def.setup());
+    stageRef.current?.cancelPlacement();
+    stageRef.current?.cancelWire();
+    setPlacing(null);
+    setTool('select');
+    setMode('standard');
+    setRunning(!def.startPaused);
+    eventsRef.current = new Set();
+    setLesson({ id, step: 0, done: false, finished: false });
+    setHub(null);
+    requestAnimationFrame(() => stageRef.current?.frameAll());
+  }, [load, setLesson, pcbReset, mech]);
+
+  const completeStep = useCallback(() => {
+    const L = lessonRef.current;
+    if (L && !L.done) setLesson({ ...L, done: true });
+  }, [setLesson]);
+
+  const advanceLesson = useCallback(() => {
+    const L = lessonRef.current;
+    const def = L && getLesson(L.id);
+    if (!def) return;
+    eventsRef.current = new Set();
+    if (L.step + 1 >= def.steps.length) {
+      setLesson({ ...L, step: def.steps.length, done: true, finished: true });
+      const next = { ...progressRef.current, [L.id]: { at: Date.now() } };
+      progressRef.current = next;
+      setProgress(next);
+      saveProgress(next);
+    } else {
+      setLesson({ ...L, step: L.step + 1, done: false, finished: false });
+    }
+  }, [setLesson]);
+
+  const backLesson = useCallback(() => {
+    const L = lessonRef.current;
+    if (!L || L.step === 0) return;
+    eventsRef.current = new Set();
+    setLesson({ ...L, step: L.step - 1, done: true, finished: false });
+  }, [setLesson]);
+
+  const showSolution = useCallback(() => {
+    const def = getLesson(lessonRef.current?.id);
+    if (!def?.solution) return;
+    if (def.bench === 'pcb') { pcbReplace(def.solution()); return; }
+    if (def.bench === 'mech') { mech.replace(def.solution()); return; }
+    load(def.solution());
+    requestAnimationFrame(() => stageRef.current?.frameAll());
+  }, [load, pcbReplace, mech]);
+
+  const pcbEvent = useCallback((name) => {
+    eventsRef.current.add(name);
+    setPcbTick((t) => t + 1);
+  }, []);
+
+  const openHub = useCallback((tab = 'lessons', guideType = null) => {
+    setHub((h) => ({ tab, guideType: guideType ?? h?.guideType ?? 'resistor' }));
+  }, []);
+
 
   const placePart = useCallback((info) => {
     snapshot();
@@ -105,8 +250,9 @@ export default function App() {
     docRef.current.parts.push(part);
     setPlacing(null);
     setSelection(part.id);
+    track('placed:' + info.type);
     rebuild();
-  }, [rebuild, snapshot]);
+  }, [rebuild, snapshot, track]);
 
   const movePart = useCallback((id, result) => {
     const part = docRef.current.parts.find((p) => p.id === id);
@@ -124,8 +270,9 @@ export default function App() {
     part.rot = ((part.rot ?? 0) + Math.PI / 2) % (Math.PI * 2);
     const board = docRef.current.parts.find((p) => CATALOG[p.type].board);
     part.inserted = board ? computeInsertion(part, board) : {};
+    track('rotated');
     rebuild();
-  }, [rebuild, snapshot]);
+  }, [rebuild, snapshot, track]);
 
   const duplicatePart = useCallback((id) => {
     const src = docRef.current.parts.find((p) => p.id === id);
@@ -145,7 +292,7 @@ export default function App() {
     docRef.current.parts = docRef.current.parts.filter((p) => p.id !== id);
     docRef.current.wires = docRef.current.wires.filter(
       (w) => ![w.a, w.b].some((ep) => (ep.kind === 'pin' ? ep.partId : ep.boardId) === id));
-    setSelection(null);
+    setSelection((sel) => (sel === id ? null : sel));
     rebuild();
   }, [rebuild, snapshot]);
 
@@ -160,8 +307,9 @@ export default function App() {
     else if (rail === 'tneg' || rail === 'bneg') color = '#48484a';
     else color = WIRE_COLORS[wireColor.current++ % WIRE_COLORS.length];
     docRef.current.wires.push({ id: newId('w'), a, b, color });
+    track('wire');
     rebuild();
-  }, [rebuild, snapshot]);
+  }, [rebuild, snapshot, track]);
 
   const deleteWire = useCallback((id) => {
     snapshot();
@@ -175,17 +323,18 @@ export default function App() {
     const schema = CATALOG[part.type].props.find((p) => p.key === key);
     if (!schema?.live) snapshot();
     part.props = { ...part.props, [key]: value };
+    track(`prop:${part.type}:${key}`);
     force();
-  }, [snapshot]);
+  }, [snapshot, track]);
 
   const interact = useCallback((id, phase) => {
     const part = docRef.current.parts.find((p) => p.id === id);
     if (!part) return;
     const def = CATALOG[part.type];
-    if (phase === 'press') def.onPress?.(part);
+    if (phase === 'press') { def.onPress?.(part); track('pressed:' + part.type); }
     else def.onRelease?.(part);
     force();
-  }, []);
+  }, [track]);
 
   const undo = useCallback(() => {
     const prev = past.current.pop();
@@ -213,6 +362,7 @@ export default function App() {
       const file = input.files?.[0];
       if (!file) return;
       try {
+        setLesson(null);
         load(deserialize(JSON.parse(await file.text())));
         requestAnimationFrame(() => stageRef.current?.frameAll());
       } catch (err) {
@@ -220,9 +370,8 @@ export default function App() {
       }
     };
     input.click();
-  }, [load]);
+  }, [load, setLesson]);
 
-  // ----------------------------------------------------------------- audio
 
   const syncAudio = useCallback(() => {
     const ctx = audioRef.current;
@@ -238,7 +387,6 @@ export default function App() {
     ctx.osc.frequency.setTargetAtTime(freq, ctx.audio.currentTime, 0.02);
   }, [sound]);
 
-  // ------------------------------------------------------------ frame loop
 
   const onFrame = useCallback((dt) => {
     const circuit = circuitRef.current;
@@ -258,12 +406,20 @@ export default function App() {
     statusClock.current += dt;
     if (statusClock.current > 0.12) {
       statusClock.current = 0;
-      setStatus({ time: circuit.time, nodes: circuit.nodeCount, converged: circuit.converged });
+      const issues = diagnose(docRef.current, circuit);
+      setStatus({ time: circuit.time, nodes: circuit.nodeCount, converged: circuit.converged, issues });
+
+      const L = lessonRef.current;
+      if (L && !L.done && !L.finished) {
+        const step = getLesson(L.id)?.steps[L.step];
+        if (step?.check?.({ doc: docRef.current, circuit, events: eventsRef.current, ...liveRef.current })) {
+          lessonRef.current = { ...L, done: true };
+          setLessonState(lessonRef.current);
+        }
+      }
     }
   }, [mode, running, speed, syncAudio, vmax]);
 
-  // Stage callbacks are registered once; this ref keeps them pointing at the
-  // latest closures without tearing down the WebGL context every render.
   const handlers = useRef({});
   handlers.current = {
     onSelect: setSelection,
@@ -277,7 +433,6 @@ export default function App() {
     onFrame,
   };
 
-  // ------------------------------------------------------------------ mount
 
   useEffect(() => {
     const stage = new Stage(canvasRef.current);
@@ -289,6 +444,8 @@ export default function App() {
 
     const onResize = () => stage.resize();
     window.addEventListener('resize', onResize);
+    const ro = new ResizeObserver(onResize);
+    if (canvasRef.current?.parentElement) ro.observe(canvasRef.current.parentElement);
     stage.resize();
 
     docRef.current = getExample('first-light').build();
@@ -308,38 +465,54 @@ export default function App() {
         osc.connect(gain).connect(audio.destination);
         osc.start();
         audioRef.current = { audio, osc, gain };
-      } catch { /* audio is a nicety, not a requirement */ }
+      } catch {}
     };
     window.addEventListener('pointerdown', startAudio, { once: true });
 
     return () => {
       window.removeEventListener('resize', onResize);
+      ro.disconnect();
       window.removeEventListener('pointerdown', startAudio);
       audioRef.current?.audio.close();
       stage.dispose();
     };
   }, []);
 
-  // Push the document at the stage after every render.
+  useEffect(() => {
+    liveRef.current = { mode, running, selection, bench, splitFocus };
+    progressRef.current = progress;
+  });
+
+  useEffect(() => {
+    const L = lessonRef.current;
+    if (!L || L.done || L.finished || bench !== 'pcb') return;
+    const step = getLesson(L.id)?.steps[L.step];
+    if (step?.check?.({ pcb: deferredPcb, analysis: pcbAnalysis, events: eventsRef.current })) completeStep();
+  }, [bench, deferredPcb, pcbAnalysis, pcbTick, lesson, completeStep]);
+
+
+
   useEffect(() => {
     stageRef.current?.sync(doc.parts, doc.wires, selection, tool, mode);
     if (mode === 'standard') stageRef.current?.updateProbe(null);
   });
 
-  // ------------------------------------------------------------- shortcuts
 
   useEffect(() => {
     const onKey = (e) => {
       const tag = e.target?.tagName;
       if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+      const { bench: b, splitFocus: sf } = liveRef.current;
+      if (b === 'pcb' || b === 'mech' || (b === 'split' && sf === 'mech')) { if (e.key === 'Escape') setHub(null); return; }
       const meta = e.metaKey || e.ctrlKey;
-      if (meta && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+      if (meta && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
       if (meta && e.key.toLowerCase() === 'd') { e.preventDefault(); if (selection) duplicatePart(selection); return; }
       if (meta && e.key.toLowerCase() === 's') { e.preventDefault(); saveFile(); return; }
       if (meta) return;
       switch (e.key) {
         case 'Escape':
           setHelp(false);
+          setHub(null);
           setPlacing(null);
           stageRef.current?.cancelPlacement();
           stageRef.current?.cancelWire();
@@ -352,6 +525,7 @@ export default function App() {
         case 'v': case 'V': setTool('select'); break;
         case 'w': case 'W': setTool('wire'); break;
         case 'f': case 'F': stageRef.current?.frameAll(); break;
+        case 'l': case 'L': setHub((h) => (h ? null : { tab: 'lessons', guideType: 'resistor' })); break;
         case ' ': e.preventDefault(); setRunning((v) => !v); break;
         case '1': stageRef.current?.setView('iso'); break;
         case '2': stageRef.current?.setView('top'); break;
@@ -365,7 +539,6 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [deletePart, duplicatePart, placing, redo, rotatePart, saveFile, selection, undo]);
 
-  // ---------------------------------------------------------------- actions
 
   const pick = useCallback((type) => {
     if (placing === type) { setPlacing(null); stageRef.current?.cancelPlacement(); return; }
@@ -373,6 +546,11 @@ export default function App() {
     setTool('select');
     stageRef.current?.beginPlacement(type);
   }, [placing]);
+
+  const placeFromGuide = useCallback((type) => {
+    setHub(null);
+    pick(type);
+  }, [pick]);
 
   const stepOnce = useCallback(() => {
     for (let i = 0; i < 10; i++) circuitRef.current?.step(DT);
@@ -389,16 +567,59 @@ export default function App() {
     rebuild();
   }, [rebuild]);
 
-  // Recomputed every render on purpose: the status tick re-renders at ~8 Hz so
-  // the inspector readout tracks the live solution.
   const selected = doc.parts.find((p) => p.id === selection) ?? null;
+  const activeLesson = lesson ? getLesson(lesson.id) : null;
+  const activeLessonStep = activeLesson?.steps?.[lesson?.step] ?? null;
+  const guideContext = useMemo(() => ({
+    bench,
+    lessonId: lesson?.id ?? null,
+    lessonTitle: activeLesson?.title ?? null,
+    lessonLevel: activeLesson?.level ?? null,
+    stepIndex: lesson?.step ?? null,
+    stepCount: activeLesson?.steps?.length ?? null,
+    stepTitle: activeLessonStep?.title ?? null,
+    stepBody: activeLessonStep?.body ?? null,
+    stepHint: activeLessonStep?.hint ?? null,
+    lessonFinished: Boolean(lesson?.finished),
+    stepDone: Boolean(lesson?.done),
+    stepKind: activeLessonStep?.quiz ? 'quiz' : activeLessonStep?.check ? 'do' : activeLessonStep ? 'read' : null,
+    partCount: doc.parts.length,
+    wireCount: doc.wires.length,
+    parts: doc.parts.slice(0, 16).map((part) => ({
+      name: CATALOG[part.type]?.name ?? part.type,
+      type: part.type,
+      props: Object.entries(part.props ?? {}).slice(0, 4).map(([key, value]) => `${key}=${String(value).slice(0, 48)}`).join(', '),
+    })),
+    diagnostics: status.issues.slice(0, 12).map((issue) => ({ level: issue.level, title: issue.title, detail: issue.detail })),
+    selectedPart: selected ? (CATALOG[selected.type]?.name ?? selected.type) : null,
+    simulationConverged: status.converged,
+  }), [bench, lesson?.id, lesson?.step, lesson?.finished, lesson?.done, activeLesson, activeLessonStep, doc.parts.length, doc.wires.length, selection, status.issues, status.converged]);
+  const hasBreadboard = doc.parts.some((p) => CATALOG_FOOTPRINTS[p.type]);
+  const coachEl = activeLesson && (activeLesson.bench ?? 'breadboard') === bench ? (
+      <Coach
+              lesson={activeLesson}
+              stepIndex={lesson.step}
+              done={lesson.done}
+              finished={lesson.finished}
+              nextLesson={getLesson(nextLessonId(lesson.id))}
+              onDone={completeStep}
+              onNext={advanceLesson}
+              onBack={backLesson}
+              onExit={() => setLesson(null)}
+              onSolution={showSolution}
+              onHub={() => openHub('lessons')}
+              onStartLesson={startLesson}
+            />
+  ) : null;
 
-  // ------------------------------------------------------------------ view
 
   return (
-    <div className="app">
+    <div className={`app${bench === 'split' ? ' is-split' : ''}`} ref={appRef} style={bench === 'split' ? { '--split-x': `${splitRatio * 100}%` } : undefined}>
       <TopBar
         onExample={loadExample}
+        onLearn={() => openHub('lessons')}
+        bench={bench}
+        onBench={switchBench}
         onSave={saveFile}
         onOpen={openFile}
         onUndo={undo}
@@ -410,24 +631,30 @@ export default function App() {
         onHelp={() => setHelp((v) => !v)}
       />
 
-      <div className="stage-wrap">
+      <div className="stage-wrap" onPointerDownCapture={() => setSplitFocus('breadboard')}>
         <canvas ref={canvasRef} />
 
-        <Palette placing={placing} onPick={pick} />
-        <Toolbar tool={tool} setTool={setTool} mode={mode} setMode={setMode} />
+        <Palette placing={placing} onPick={pick} parts={doc.parts} selection={selection} onSelect={setSelection} onDelete={deletePart} />
+        <Toolbar tool={tool} setTool={setTool} mode={mode} setMode={setMode}>
+          <Doctor issues={status.issues} onSelect={setSelection} onOpen={() => track('doctor')} />
+        </Toolbar>
         <Dock onView={(v) => stageRef.current?.setView(v)} onFrame={() => stageRef.current?.frameAll()} />
         <Legend mode={mode} vmax={vmax} />
 
-        {selected && (
-          <Inspector
-            part={selected}
-            onProp={(key, value) => setProp(selected.id, key, value)}
-            onRotate={() => rotatePart(selected.id)}
-            onDuplicate={() => duplicatePart(selected.id)}
-            onDelete={() => deletePart(selected.id)}
-            onClose={() => setSelection(null)}
-          />
-        )}
+        <div className="rightcol">
+          {(bench === 'breadboard' || bench === 'split') && coachEl}
+          {selected && (
+            <Inspector
+              part={selected}
+              onProp={(key, value) => setProp(selected.id, key, value)}
+              onRotate={() => rotatePart(selected.id)}
+              onDuplicate={() => duplicatePart(selected.id)}
+              onDelete={() => deletePart(selected.id)}
+              onGuide={(type) => openHub('guide', type)}
+              onClose={() => setSelection(null)}
+            />
+          )}
+        </div>
 
         {placing && (
           <Banner>
@@ -446,33 +673,101 @@ export default function App() {
         />
       </div>
 
+      {bench === 'split' && (
+        <div
+          className="split-divider"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize breadboard / mechanical split"
+          onPointerDown={onSplitDown}
+          onTouchStart={onSplitDown}
+          onDoubleClick={() => setSplitRatio(0.5)}
+          title="Drag to resize · double-click to reset"
+        />
+      )}
+
+      {bench === 'pcb' && (
+        <div className="pcb-shell">
+          <PcbEditor
+            store={pcb}
+            analysis={pcbAnalysis}
+            hasBreadboard={hasBreadboard}
+            onImport={() => extractNetlist(docRef.current)}
+            coach={coachEl}
+            onEvent={pcbEvent}
+          />
+        </div>
+      )}
+      {(bench === 'mech' || bench === 'split') && (
+        <div className={`pcb-shell${bench === 'split' ? ' split-pane' : ''}`} onPointerDownCapture={() => setSplitFocus('mech')}>
+          <MechEditor
+            store={mech}
+            keyboardActive={bench === 'mech' || splitFocus === 'mech'}
+            coach={bench === 'mech' ? coachEl : null}
+            onEvent={pcbEvent}
+            lessonStep={activeLesson?.bench === 'mech' && lesson && !lesson.done && !lesson.finished ? activeLesson.steps[lesson.step] : null}
+            lessonEvents={eventsRef.current}
+            onLessonPass={completeStep}
+            bbDocRef={docRef}
+            bbCircuitRef={circuitRef}
+            pcbDoc={pcb.doc}
+          />
+        </div>
+      )}
       {help && <Help onClose={() => setHelp(false)} />}
+      {hub && (
+        <LearnHub
+          tab={hub.tab}
+          guideType={hub.guideType}
+          progress={progress}
+          onTab={(tab) => setHub((h) => ({ ...h, tab }))}
+          onGuideType={(guideType) => setHub((h) => ({ ...h, guideType }))}
+          onStartLesson={startLesson}
+          onPlace={placeFromGuide}
+          onClose={() => setHub(null)}
+        />
+      )}
       {intro !== 'gone' && (
         <Intro
           leaving={intro === 'leaving'}
-          onStart={(id) => {
-            if (id) loadExample(id);
+          returning={Object.keys(progress).length > 0}
+          onStart={(kind, id) => {
+            if (kind === 'lesson') startLesson(id);
+            else if (id) loadExample(id);
             setIntro('leaving');
             setTimeout(() => setIntro('gone'), 700);
           }}
         />
       )}
+      {intro === 'gone' && <GuideBot context={guideContext} />}
     </div>
   );
 }
 
-function Intro({ leaving, onStart }) {
+function Intro({ leaving, returning, onStart }) {
   return (
     <div className={`intro${leaving ? ' leaving' : ''}`}>
       <div className="intro-fade">
+        <Logo size={84} />
         <h1>BreadBai</h1>
         <p>
-           A 3d Circuit Simulator.
+          A 3D electronics lab. Build circuits on a breadboard, watch real physics run them,
+          and learn as you go.
         </p>
-        <img src="src\assets\bread3.png" width={450} alt="Splash Screen"/>
+        <img src={splash} width={450} alt="A 3D breadboard with a glowing LED circuit" />
         <div className="cta">
-          <button className="btn primary" onClick={() => onStart('first-light')}>START</button>
-          <button className="btn ghost" onClick={() => onStart('blank')}>Start from an empty board</button>
+          {returning ? (
+            <>
+              <button className="btn primary" onClick={() => onStart('example', 'first-light')}>Open the lab</button>
+              <button className="btn" onClick={() => onStart('lesson', 'basics')}>Learn the basics</button>
+            </>
+          ) : (
+            <>
+              <button className="btn primary" onClick={() => onStart('lesson', 'basics')}>Start learning</button>
+              <button className="btn" onClick={() => onStart('example', 'first-light')}>Open the lab</button>
+            </>
+          )}
+          <button className="btn ghost" onClick={() => onStart('example', 'blank')}>Empty board</button>
         </div>
       </div>
     </div>
@@ -486,6 +781,7 @@ const SHORTCUTS = [
   ['Delete', 'Remove the selected part'],
   ['Space', 'Run or pause the simulation'],
   ['F', 'Frame everything'],
+  ['L', 'Open lessons, guide and cheat sheet'],
   ['1 – 4', 'Iso, top, front, side views'],
   ['⌘Z / ⇧⌘Z', 'Undo / redo'],
   ['⌘S', 'Save the circuit to a file'],

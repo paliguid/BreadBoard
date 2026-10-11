@@ -1,13 +1,12 @@
 import { VT, stampDiode } from './solver.js';
 import { formatValue } from './units.js';
 
-export const G = 2.54; // 0.1 inch — the pitch everything on a BreadBai obeys
+export const G = 2.54;
 
 const pin = (name, x, z, label = name) => ({ name, x, z, label });
 const R_OPEN = 1e11;
 const R_CLOSED = 2e-3;
 
-/** Forward voltage and tint for each LED colour, measured-ish at 20 mA. */
 export const LED_COLORS = {
   red: { vf: 1.85, tint: '#ff2d2d', glow: '#ff5a4a' },
   amber: { vf: 2.0, tint: '#ff9d1c', glow: '#ffb64d' },
@@ -131,7 +130,7 @@ const defs = {
       state.voltage = sys.vd(nodes.a, nodes.k);
       if (i > 0.045) state.overload = (state.overload ?? 0) + 1; else state.overload = 0;
       if (state.overload > 400) state.burnt = true;
-      const target = state.burnt ? 0 : Math.max(0, Math.min(1, Math.pow(i / 0.018, 0.55)));
+      const target = state.burnt ? 0 : Math.max(0, Math.min(1, Math.pow(Math.max(i, 0) / 0.018, 0.55)));
       state.brightness += (target - state.brightness) * 0.35;
     },
     readout: (p) => (p.state?.burnt ? 'Burnt out' : `${formatValue(p.state?.current ?? 0, 'A')} · ${formatValue(p.state?.voltage ?? 0, 'V')}`),
@@ -167,7 +166,7 @@ const defs = {
       const geq = props.capacitance / dt;
       sys.addG(nodes.pos, nodes.neg, geq);
       sys.addI(nodes.pos, nodes.neg, -geq * (state.v ?? 0));
-      sys.addR(nodes.pos, nodes.neg, 2e7); // leakage
+      sys.addR(nodes.pos, nodes.neg, 2e7);
     },
     post({ sys, nodes, props, dt, state }) {
       const vNow = sys.vd(nodes.pos, nodes.neg);
@@ -342,19 +341,23 @@ const defs = {
     resetState: (s) => { s.omega = 0; s.angle = 0; },
     stamp({ sys, nodes, props, state }) {
       sys.addR(nodes.pos, nodes.neg, props.resistance);
-      // Back-EMF appears as a current source opposing the applied voltage.
       sys.addI(nodes.pos, nodes.neg, -(props.ke * (state.omega ?? 0)) / props.resistance);
     },
     post({ sys, nodes, props, dt, state }) {
       const v = sys.vd(nodes.pos, nodes.neg);
       const i = (v - props.ke * state.omega) / props.resistance;
+      state.current = i;
+      if (state.linked) {
+        state.angle = (state.angle + state.omega * dt) % (Math.PI * 2);
+        state.rpm = (state.omega * 60) / (Math.PI * 2);
+        return;
+      }
       const J = 2.2e-6;
       const damping = 1e-6 + props.load * 8e-6;
       const torque = props.ke * i - damping * state.omega;
       state.omega += (torque / J) * dt;
       if (Math.abs(state.omega) < 0.05 && Math.abs(v) < 0.05) state.omega = 0;
       state.angle = (state.angle + state.omega * dt) % (Math.PI * 2);
-      state.current = i;
       state.rpm = (state.omega * 60) / (Math.PI * 2);
     },
     readout: (p) => `${Math.round(Math.abs(p.state?.rpm ?? 0))} rpm · ${formatValue(Math.abs(p.state?.current ?? 0), 'A')}`,
@@ -468,7 +471,6 @@ const defs = {
   },
 };
 
-// Fill in defaults each definition can rely on.
 for (const [id, def] of Object.entries(defs)) {
   def.id = id;
   def.defaults = def.defaults ?? {};

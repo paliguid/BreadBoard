@@ -17,12 +17,11 @@ export function formatValue(value, unit = '', digits = 3) {
 
 const MULT = { g: 1e9, meg: 1e6, m: 1e-3, k: 1e3, µ: 1e-6, u: 1e-6, n: 1e-9, p: 1e-12 };
 
-/** Accepts "4k7", "4.7k", "10M", "220", "100n". Returns null when unusable. */
 export function parseValue(text, fallback = null) {
   if (typeof text === 'number') return text;
   if (!text) return fallback;
   const t = String(text).trim().replace(/\s+/g, '').replace(/(ohm|Ω|F|H|V|A)$/i, '');
-  const infix = t.match(/^(\d+)([a-zA-Zµ])(\d+)$/); // 4k7 style
+  const infix = t.match(/^(\d+)([a-zA-Zµ])(\d+)$/);
   if (infix) {
     const mult = MULT[infix[2].toLowerCase()] ?? MULT[infix[2]];
     if (mult) return parseFloat(`${infix[1]}.${infix[3]}`) * mult;
@@ -40,7 +39,6 @@ const BAND_COLORS = ['#101010', '#6b3f22', '#d5342b', '#e07b28', '#e6c62e',
   '#3f9c4a', '#2f63c4', '#7a4fb5', '#9a9a9a', '#f2f2f2'];
 const TOL_COLORS = { 1: '#8d6a3f', 2: '#c33a3a', 5: '#c9a227', 10: '#c0c0c0' };
 
-/** Four-band colour code for a resistance, used to paint the 3D body. */
 export function resistorBands(ohms, tolerance = 5) {
   const v = Math.max(ohms, 0.1);
   let exp = Math.floor(Math.log10(v)) - 1;

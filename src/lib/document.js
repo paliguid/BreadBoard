@@ -2,7 +2,6 @@ import { CATALOG, makeProps } from './catalog.js';
 
 export const FILE_VERSION = 1;
 
-/** Strips live simulation state so a circuit is safe to store or undo. */
 export function serialize(doc) {
   return {
     format: 'BreadBai',
